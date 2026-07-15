@@ -16,7 +16,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
-import android.os.PowerManager;
+import android.util.Log;
 import android.support.v4.media.MediaBrowserCompat;
 import android.support.v4.media.MediaDescriptionCompat;
 import android.support.v4.media.MediaMetadataCompat;
@@ -266,7 +266,6 @@ public class AudioService extends MediaBrowserServiceCompat {
 
     private FlutterEngine flutterEngine;
     private AudioServiceConfig config;
-    private PowerManager.WakeLock wakeLock;
     private MediaSessionCompat mediaSession;
     private MediaSessionCallback mediaSessionCallback;
     private List<MediaControl> controls = new ArrayList<>();
@@ -322,8 +321,9 @@ public class AudioService extends MediaBrowserServiceCompat {
         setSessionToken(mediaSession.getSessionToken());
         mediaSession.setQueue(queue);
 
-        PowerManager pm = (PowerManager)getSystemService(Context.POWER_SERVICE);
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, AudioService.class.getName());
+        // No PARTIAL_WAKE_LOCK here: the audio framework holds an exempt Audio*
+        // wake lock while sound is actually playing. An app-owned wake lock
+        // counts toward Play's excessive-wake-lock metric.
 
         // Get max available VM memory, exceeding this amount will throw an
         // OutOfMemory exception. Stored in kilobytes as LruCache takes an
@@ -378,7 +378,6 @@ public class AudioService extends MediaBrowserServiceCompat {
         //     NotificationManager notificationManager = getNotificationManager();
         //     notificationManager.cancel(NOTIFICATION_ID);
         // }
-        releaseWakeLock();
         instance = null;
         notificationCreated = false;
     }
@@ -703,13 +702,18 @@ public class AudioService extends MediaBrowserServiceCompat {
     }
 
     private void enterPlayingState() {
-        ContextCompat.startForegroundService(this, new Intent(AudioService.this, AudioService.class));
         if (!mediaSession.isActive())
             mediaSession.setActive(true);
-
-        acquireWakeLock();
         mediaSession.setSessionActivity(contentIntent);
-        internalStartForeground();
+        try {
+            ContextCompat.startForegroundService(this, new Intent(AudioService.this, AudioService.class));
+            internalStartForeground();
+        } catch (Exception e) {
+            // e.g. ForegroundServiceStartNotAllowedException when resuming from
+            // the background on Android 12+: keep playing without foreground
+            // promotion instead of crashing.
+            Log.w("AudioService", "Failed to enter foreground", e);
+        }
     }
 
     private void exitPlayingState() {
@@ -720,22 +724,11 @@ public class AudioService extends MediaBrowserServiceCompat {
 
     private void exitForegroundState() {
         ServiceCompat.stopForeground(this, STOP_FOREGROUND_DETACH);
-        releaseWakeLock();
     }
 
     private void internalStartForeground() {
         startForeground(NOTIFICATION_ID, buildNotification());
         notificationCreated = true;
-    }
-
-    private void acquireWakeLock() {
-        if (!wakeLock.isHeld())
-            wakeLock.acquire();
-    }
-
-    private void releaseWakeLock() {
-        if (wakeLock.isHeld())
-            wakeLock.release();
     }
 
     private void activateMediaSession() {
