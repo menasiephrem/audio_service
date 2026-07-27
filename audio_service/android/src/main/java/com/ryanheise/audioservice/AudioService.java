@@ -16,6 +16,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
+import android.os.PowerManager;
 import android.util.Log;
 import android.support.v4.media.MediaBrowserCompat;
 import android.support.v4.media.MediaDescriptionCompat;
@@ -266,6 +267,7 @@ public class AudioService extends MediaBrowserServiceCompat {
 
     private FlutterEngine flutterEngine;
     private AudioServiceConfig config;
+    private PowerManager.WakeLock wakeLock;
     private MediaSessionCompat mediaSession;
     private MediaSessionCallback mediaSessionCallback;
     private List<MediaControl> controls = new ArrayList<>();
@@ -321,9 +323,13 @@ public class AudioService extends MediaBrowserServiceCompat {
         setSessionToken(mediaSession.getSessionToken());
         mediaSession.setQueue(queue);
 
-        // No PARTIAL_WAKE_LOCK here: the audio framework holds an exempt Audio*
-        // wake lock while sound is actually playing. An app-owned wake lock
-        // counts toward Play's excessive-wake-lock metric.
+        // Held ONLY while playing (release is unconditional in
+        // exitPlayingState, NOT tied to androidStopForegroundOnPause): the
+        // framework's exempt Audio* lock covers rendering, but app-side work
+        // (network fetch, StreamAudioSource decode) needs the CPU too.
+        PowerManager pm = (PowerManager)getSystemService(Context.POWER_SERVICE);
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, AudioService.class.getName());
+        wakeLock.setReferenceCounted(false);
 
         // Get max available VM memory, exceeding this amount will throw an
         // OutOfMemory exception. Stored in kilobytes as LruCache takes an
@@ -360,6 +366,7 @@ public class AudioService extends MediaBrowserServiceCompat {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        releaseWakeLock();
         if (listener != null) {
             listener.onDestroy();
             listener = null;
@@ -704,6 +711,7 @@ public class AudioService extends MediaBrowserServiceCompat {
     private void enterPlayingState() {
         if (!mediaSession.isActive())
             mediaSession.setActive(true);
+        acquireWakeLock();
         mediaSession.setSessionActivity(contentIntent);
         try {
             ContextCompat.startForegroundService(this, new Intent(AudioService.this, AudioService.class));
@@ -717,9 +725,20 @@ public class AudioService extends MediaBrowserServiceCompat {
     }
 
     private void exitPlayingState() {
+        releaseWakeLock();
         if (config.androidStopForegroundOnPause) {
             exitForegroundState();
         }
+    }
+
+    private void acquireWakeLock() {
+        if (!wakeLock.isHeld())
+            wakeLock.acquire();
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock.isHeld())
+            wakeLock.release();
     }
 
     private void exitForegroundState() {
