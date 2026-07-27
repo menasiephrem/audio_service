@@ -708,7 +708,7 @@ public class AudioService extends MediaBrowserServiceCompat {
         }
     }
 
-    private void enterPlayingState() {
+    void enterPlayingState() { // package-private for tests
         if (!mediaSession.isActive())
             mediaSession.setActive(true);
         acquireWakeLock();
@@ -724,7 +724,7 @@ public class AudioService extends MediaBrowserServiceCompat {
         }
     }
 
-    private void exitPlayingState() {
+    void exitPlayingState() { // package-private for tests
         releaseWakeLock();
         if (config.androidStopForegroundOnPause) {
             exitForegroundState();

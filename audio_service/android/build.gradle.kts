@@ -44,7 +44,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        minSdk = 19
+        minSdk = 21
     }
 
     compileOptions {
@@ -65,9 +65,17 @@ android {
     lint {
         disable += listOf("InvalidPackage")
     }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
     implementation("androidx.media:media:1.7.0")
     implementation("androidx.core:core:1.13.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
