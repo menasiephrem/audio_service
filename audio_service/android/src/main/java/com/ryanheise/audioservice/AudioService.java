@@ -719,8 +719,16 @@ public class AudioService extends MediaBrowserServiceCompat {
         } catch (Exception e) {
             // e.g. ForegroundServiceStartNotAllowedException when resuming from
             // the background on Android 12+: keep playing without foreground
-            // promotion instead of crashing.
+            // promotion instead of crashing. Recorded so the app can report it
+            // (an unpromoted service leaves the process LMK-killable).
             Log.w("AudioService", "Failed to enter foreground", e);
+            try {
+                getSharedPreferences("as_diag", MODE_PRIVATE).edit()
+                        .putLong("fgsFailedAt", System.currentTimeMillis())
+                        .putString("fgsFailure", e.toString())
+                        .apply();
+            } catch (Exception ignored) {
+            }
         }
     }
 
