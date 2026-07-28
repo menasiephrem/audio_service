@@ -366,6 +366,7 @@ public class AudioService extends MediaBrowserServiceCompat {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        handler.removeCallbacks(retryForeground);
         releaseWakeLock();
         if (listener != null) {
             listener.onDestroy();
@@ -729,6 +730,11 @@ public class AudioService extends MediaBrowserServiceCompat {
                         .apply();
             } catch (Exception ignored) {
             }
+            // An unpromoted service leaves the process LMK/optimizer-killable
+            // mid-playback: keep retrying while playing.
+            foregroundRetries = 0;
+            handler.removeCallbacks(retryForeground);
+            handler.postDelayed(retryForeground, 5000);
         }
     }
 
@@ -751,12 +757,34 @@ public class AudioService extends MediaBrowserServiceCompat {
 
     private void exitForegroundState() {
         ServiceCompat.stopForeground(this, STOP_FOREGROUND_DETACH);
+        foregroundEntered = false;
     }
 
     private void internalStartForeground() {
         startForeground(NOTIFICATION_ID, buildNotification());
         notificationCreated = true;
+        foregroundEntered = true;
     }
+
+    private boolean foregroundEntered = false;
+    private int foregroundRetries = 0;
+    private final Runnable retryForeground = new Runnable() {
+        @Override
+        public void run() {
+            if (!playing || foregroundEntered) return;
+            try {
+                ContextCompat.startForegroundService(AudioService.this,
+                        new Intent(AudioService.this, AudioService.class));
+                internalStartForeground();
+                getSharedPreferences("as_diag", MODE_PRIVATE).edit()
+                        .putLong("fgsRecoveredAt", System.currentTimeMillis())
+                        .apply();
+            } catch (Exception e) {
+                if (++foregroundRetries < 30)
+                    handler.postDelayed(this, 10000);
+            }
+        }
+    };
 
     private void activateMediaSession() {
         if (!mediaSession.isActive())
